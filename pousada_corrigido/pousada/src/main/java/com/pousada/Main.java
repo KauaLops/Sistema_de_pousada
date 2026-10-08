@@ -34,16 +34,31 @@ public class Main {
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("dd/MM/uuuu")
             .withResolverStyle(ResolverStyle.STRICT);
 
-    // Campo static: garante que a configuração do nível de log não seja descartada.
+
     private static final Logger HIBERNATE_LOG = Logger.getLogger("org.hibernate");
 
     private static final Pattern EMAIL_VALIDO = Pattern.compile("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$");
 
-    // Tamanhos máximos das colunas (devem coincidir com as entidades)
+   
+    private static final Pattern NOME_VALIDO =
+            Pattern.compile("^[\\p{L}][\\p{L} .'-]*$");
+
+    
+    private static final Pattern TELEFONE_VALIDO =
+            Pattern.compile("^\\+?[0-9() -]+$");
+
+   
+    private static final Pattern DOCUMENTO_VALIDO =
+            Pattern.compile("^[0-9./-]+$");
+
+
     private static final int MAX_NOME = 120;
     private static final int MAX_EMAIL = 120;
     private static final int MAX_TELEFONE = 20;
     private static final int MAX_DOCUMENTO = 20;
+
+    private static final int MIN_DIGITOS_TELEFONE = 8;
+    private static final int MIN_DIGITOS_DOCUMENTO = 5;
 
     public static void main(String[] args) {
         HIBERNATE_LOG.setLevel(Level.SEVERE);
@@ -66,7 +81,7 @@ public class Main {
         try {
             executarMenu(hospedeDAO, quartoDAO, reservaDAO);
         } catch (NoSuchElementException e) {
-            // Entrada encerrada (Ctrl+D / Ctrl+Z ou console fechado)
+
             System.out.println("\nEntrada encerrada. Finalizando o sistema...");
         } finally {
             SCANNER.close();
@@ -118,10 +133,7 @@ public class Main {
         } while (opcao != 0);
     }
 
-    /**
-     * Converte exceções técnicas (Hibernate/JDBC) em mensagens compreensíveis.
-     * Percorre toda a cadeia de causas, pois o Hibernate costuma encapsular o erro original.
-     */
+
     private static String traduzirErro(RuntimeException e) {
         for (Throwable t = e; t != null; t = t.getCause()) {
             if (t instanceof ConstraintViolationException) {
@@ -142,11 +154,7 @@ public class Main {
         return (mensagem == null || mensagem.isBlank()) ? causa.getClass().getSimpleName() : mensagem;
     }
 
-    /**
-     * Permite criar várias hospedagens, uma após a outra, sem encerrar o programa.
-     * Nada é gravado no banco até que todos os dados tenham sido informados e validados,
-     * evitando deixar hóspedes ou quartos "soltos" caso a pessoa desista no meio.
-     */
+
     private static void adicionarHospedagem(HospedeDAO hospedeDAO,
                                             QuartoDAO quartoDAO,
                                             ReservaDAO reservaDAO) {
@@ -158,9 +166,9 @@ public class Main {
 
         if (hospede == null) {
             System.out.println("Hóspede não encontrado. Vamos cadastrá-lo.");
-            String nome = lerTexto("Nome: ", MAX_NOME);
-            String telefone = lerTexto("Telefone: ", MAX_TELEFONE);
-            String documento = lerTexto("Documento: ", MAX_DOCUMENTO);
+            String nome = lerNome("Nome: ");
+            String telefone = lerTelefone("Telefone: ");
+            String documento = lerDocumento("Documento: ");
             hospede = new Hospede(nome, email, telefone, documento);
             hospedeNovo = true;
         } else {
@@ -185,13 +193,12 @@ public class Main {
             return;
         }
 
-        LocalDate checkIn = lerData("Check-in (dd/MM/yyyy): ");
-        LocalDate checkOut = lerData("Check-out (dd/MM/yyyy): ");
-
-        if (!checkOut.isAfter(checkIn)) {
-            System.out.println("O check-out deve ser depois do check-in.");
-            return;
-        }
+        LocalDate hoje = LocalDate.now();
+        LocalDate checkIn = lerDataMinima("Check-in (dd/MM/yyyy): ", hoje,
+                "O check-in não pode ser anterior a hoje (" + hoje.format(DATE_FORMAT) + ").");
+        LocalDate minimoCheckOut = checkIn.plusDays(1);
+        LocalDate checkOut = lerDataMinima("Check-out (dd/MM/yyyy): ", minimoCheckOut,
+                "O check-out deve ser depois do check-in (a partir de " + minimoCheckOut.format(DATE_FORMAT) + ").");
 
         // Quarto novo ainda não tem ID nem hospedagens, então não há conflito possível.
         if (!quartoNovo && reservaDAO.existeConflitoDePeriodo(quarto.getId(), checkIn, checkOut)) {
@@ -255,9 +262,9 @@ public class Main {
             return;
         }
 
-        String nome = lerTexto("Nome: ", MAX_NOME);
-        String telefone = lerTexto("Telefone: ", MAX_TELEFONE);
-        String documento = lerTexto("Documento: ", MAX_DOCUMENTO);
+        String nome = lerNome("Nome: ");
+        String telefone = lerTelefone("Telefone: ");
+        String documento = lerDocumento("Documento: ");
 
         Hospede hospede = new Hospede(nome, email, telefone, documento);
         hospedeDAO.salvar(hospede);
@@ -312,9 +319,9 @@ public class Main {
         }
 
         System.out.println("Editando: " + hospede);
-        String nome = lerTexto("Novo nome: ", MAX_NOME);
-        String telefone = lerTexto("Novo telefone: ", MAX_TELEFONE);
-        String documento = lerTexto("Novo documento: ", MAX_DOCUMENTO);
+        String nome = lerNome("Novo nome: ");
+        String telefone = lerTelefone("Novo telefone: ");
+        String documento = lerDocumento("Novo documento: ");
 
         hospede.setNome(nome);
         hospede.setTelefone(telefone);
@@ -465,7 +472,7 @@ public class Main {
         }
     }
 
-    /** Lê um inteiro maior que zero (números de quarto, IDs). */
+
     private static int lerInteiroPositivo(String mensagem) {
         while (true) {
             int valor = lerInteiro(mensagem);
@@ -502,7 +509,7 @@ public class Main {
         return lerTexto(mensagem, Integer.MAX_VALUE);
     }
 
-    /** Lê um texto não vazio, respeitando o tamanho máximo da coluna no banco. */
+
     private static String lerTexto(String mensagem, int tamanhoMaximo) {
         while (true) {
             System.out.print(mensagem);
@@ -527,6 +534,46 @@ public class Main {
         }
     }
 
+    private static String lerNome(String mensagem) {
+        while (true) {
+            String nome = lerTexto(mensagem, MAX_NOME);
+            if (NOME_VALIDO.matcher(nome).matches()) {
+                return nome;
+            }
+            System.out.println("Nome inválido. Use apenas letras (sem números ou símbolos).");
+        }
+    }
+
+    private static String lerTelefone(String mensagem) {
+        while (true) {
+            String telefone = lerTexto(mensagem, MAX_TELEFONE);
+            if (!TELEFONE_VALIDO.matcher(telefone).matches()) {
+                System.out.println("Telefone inválido. Use apenas números (pode usar + ( ) e -). Exemplo: (83) 99999-9999");
+            } else if (contarDigitos(telefone) < MIN_DIGITOS_TELEFONE) {
+                System.out.println("Telefone muito curto (mínimo de " + MIN_DIGITOS_TELEFONE + " dígitos).");
+            } else {
+                return telefone;
+            }
+        }
+    }
+
+    private static String lerDocumento(String mensagem) {
+        while (true) {
+            String documento = lerTexto(mensagem, MAX_DOCUMENTO);
+            if (!DOCUMENTO_VALIDO.matcher(documento).matches()) {
+                System.out.println("Documento inválido. Use apenas números (pode usar . - e /). Exemplo: 123.456.789-00");
+            } else if (contarDigitos(documento) < MIN_DIGITOS_DOCUMENTO) {
+                System.out.println("Documento muito curto (mínimo de " + MIN_DIGITOS_DOCUMENTO + " dígitos).");
+            } else {
+                return documento;
+            }
+        }
+    }
+
+    private static int contarDigitos(String texto) {
+        return (int) texto.chars().filter(Character::isDigit).count();
+    }
+
     private static LocalDate lerData(String mensagem) {
         while (true) {
             try {
@@ -538,7 +585,19 @@ public class Main {
         }
     }
 
-    /** Pergunta s/n até receber uma resposta válida. */
+
+    // Lê uma data e só aceita se for igual ou posterior a dataMinima.
+    private static LocalDate lerDataMinima(String mensagem, LocalDate dataMinima, String mensagemErro) {
+        while (true) {
+            LocalDate data = lerData(mensagem);
+            if (!data.isBefore(dataMinima)) {
+                return data;
+            }
+            System.out.println(mensagemErro);
+        }
+    }
+
+
     private static boolean confirmar(String mensagem) {
         while (true) {
             String resposta = lerTexto(mensagem);
